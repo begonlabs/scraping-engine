@@ -151,35 +151,26 @@ class Axesor:
                         company_links.extend(current_page_links)
                         rprint(f"[green]Encontradas {current_count} empresas en página {page_num} (Total: {len(company_links)})[/green]")
                         
-                        pagination_div = page.query_selector('div.paginacion-botones')
+                        pagination_info = self._detect_pagination(page)
                         
-                        if not pagination_div:
-                            rprint(f"[yellow]No se encontró div de paginación, asumiendo fin[/yellow]")
+                        rprint(f"[cyan]Info paginación: {pagination_info}[/cyan]")
+                        
+                        if not pagination_info['has_more_pages']:
+                            rprint(f"[green]No hay más páginas disponibles[/green]")
                             rprint(f"[green]Total empresas en municipio: {len(company_links)}[/green]")
                             return company_links
+
+                        next_page_num = page_num + 1
+                        base_url = place_url.rstrip('/')
                         
-                        next_button = pagination_div.query_selector('a.next[rel="next"]')
-                        
-                        if next_button:
-                            next_href = next_button.get_attribute('href')
-                            if next_href:
-                                current_url = f"https:{next_href}" if next_href.startswith('//') else next_href
-                                rprint(f"[green]Siguiente página encontrada: {current_url}[/green]")
-                                page_num += 1
-                                break
-                            else:
-                                rprint(f"[yellow]Botón siguiente sin href válido[/yellow]")
-                                rprint(f"[green]Total empresas en municipio: {len(company_links)}[/green]")
-                                return company_links
+                        if re.search(r'/\d+$', base_url):
+                            current_url = re.sub(r'/\d+$', f'/{next_page_num}', base_url)
                         else:
-                            spans = pagination_div.query_selector_all('span.icomoon')
-                            if len(spans) >= 2:
-                                rprint(f"[green]Fin de paginación detectado (spans encontrados)[/green]")
-                            else:
-                                rprint(f"[yellow]No se encontró botón siguiente[/yellow]")
-                            
-                            rprint(f"[green]Total empresas en municipio: {len(company_links)}[/green]")
-                            return company_links
+                            current_url = f"{base_url}/{next_page_num}"
+                        
+                        rprint(f"[green]Siguiente página: {current_url}[/green]")
+                        page_num += 1
+                        break
 
                 except Exception as e:
                     if attempt == self.max_retries - 1:
@@ -191,6 +182,67 @@ class Axesor:
                     self._random_delay()
             
             self._random_delay()
+
+
+    def _detect_pagination(self, page: Page) -> Dict[str, any]:
+        try:
+            pagination_div = page.query_selector('#paginacion')
+            
+            if not pagination_div:
+                rprint(f"[yellow]No se encontró div #paginacion[/yellow]")
+                return {'has_more_pages': False, 'reason': 'no_pagination_div'}
+            
+            current_page_element = pagination_div.query_selector('.paginacion-numeracion .seleccion')
+            current_page = 1
+            if current_page_element:
+                current_page_text = current_page_element.inner_text().strip()
+                current_page = int(current_page_text) if current_page_text.isdigit() else 1
+            
+            page_links = pagination_div.query_selector_all('.paginacion-numeracion a')
+            page_numbers = []
+            
+            for link in page_links:
+                page_text = link.inner_text().strip()
+                if page_text.isdigit():
+                    page_numbers.append(int(page_text))
+            
+            next_button = pagination_div.query_selector('a.next[rel="next"]')
+            has_next_button = next_button is not None
+            
+            max_visible_page = max(page_numbers) if page_numbers else current_page
+
+            has_more_pages = False
+            reason = ""
+            
+            if has_next_button:
+                has_more_pages = True
+                reason = "next_button_exists"
+            elif current_page < max_visible_page:
+                has_more_pages = True
+                reason = f"current_page_{current_page}_less_than_max_{max_visible_page}"
+            else:
+                disabled_buttons = pagination_div.query_selector_all('.paginacion-botones span.icomoon')
+                if len(disabled_buttons) >= 2:
+                    has_more_pages = False
+                    reason = "disabled_navigation_buttons"
+                else:
+                    has_more_pages = False
+                    reason = "no_more_pages_detected"
+            
+            result = {
+                'has_more_pages': has_more_pages,
+                'current_page': current_page,
+                'visible_pages': page_numbers,
+                'max_visible_page': max_visible_page,
+                'has_next_button': has_next_button,
+                'reason': reason
+            }
+            
+            return result
+            
+        except Exception as e:
+            rprint(f"[red]Error detectando paginación: {str(e)}[/red]")
+            return {'has_more_pages': False, 'reason': f'error: {str(e)}'}
 
 
     def scrap_company_metadata(self, company_url: str) -> Optional[CompanyMetadata]:
