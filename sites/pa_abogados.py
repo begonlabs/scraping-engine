@@ -18,6 +18,7 @@ class CompanyMetadata(TypedDict):
     telefono: str
     website: str
     actividades: str
+    url: str
 
 
 
@@ -29,6 +30,7 @@ class Abogados:
         self.browser: Optional[Browser] = None
         self.request_delay = (2, 4)
         self.max_retries = 3
+        self.json_filename = f"abogados_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
     @contextmanager
     def _get_page(self, user_agent: str = None):
@@ -56,6 +58,54 @@ class Abogados:
         delay = random.uniform(*self.request_delay)
         rprint(f"[yellow]Esperando {delay:.2f} segundos...[/yellow]")
         time.sleep(delay)
+
+
+    def _append_to_json(self, data: CompanyMetadata):
+        
+        if os.path.exists(f"data/{self.json_filename}"):
+            with open(f"data/{self.json_filename}", 'r', encoding='utf-8') as f:
+                existing_data = json.load(f)
+        else:
+            existing_data = []
+        
+        existing_data.append(data)
+        
+        with open(f"data/{self.json_filename}", 'w', encoding='utf-8') as f:
+            json.dump(existing_data, f, ensure_ascii=False, indent=4)
+
+
+    def _get_text_safe(self, page: Page, selector: str) -> str:
+        
+        try:
+            element = page.query_selector(selector)
+            return element.inner_text().strip() if element else "N/A"
+        except:
+            return "N/A"
+
+
+    def _get_address_safe(self, page: Page) -> str:
+        
+        try:
+            address_element = page.query_selector('.address[itemprop="address"]')
+            if address_element:
+                street = self._get_text_safe(page, '[itemprop="streetAddress"]')
+                postal_code = self._get_text_safe(page, '[itemprop="postalCode"]')
+                locality = self._get_text_safe(page, '[itemprop="addressLocality"]')
+                
+                address_parts = [part for part in [street, postal_code, locality] if part != "N/A"]
+                return ", ".join(address_parts) if address_parts else "N/A"
+            return "N/A"
+        except:
+            return "N/A"
+
+
+    def _get_website_safe(self, page: Page) -> str:
+        
+        try:
+            website_element = page.query_selector('.sitio-web[itemprop="url"]')
+            return website_element.get_attribute('href') if website_element else "N/A"
+        except:
+            return "N/A"
 
 
     def _detect_pagination(self, page: Page) -> Dict[str, any]:
@@ -205,11 +255,25 @@ class Abogados:
             try:
                 with self._get_page() as page:
                     page.goto(company_url, wait_until="networkidle", timeout=60000)
-                    
-                    # TODO: Implementar lógica de scraping de metadatos
-                    return
-        
+                    page.wait_for_selector('h1[itemprop="name"]', timeout=30000)
 
+                    metadata: CompanyMetadata = {
+                        "nombre": self._get_text_safe(page, 'h1[itemprop="name"]'),
+                        "descripcion": self._get_text_safe(page, '.claim p'),
+                        "direccion": self._get_address_safe(page),
+                        "telefono": self._get_text_safe(page, '.telephone[itemprop="telephone"]'),
+                        "website": self._get_website_safe(page),
+                        "actividades": self._get_text_safe(page, '.actividades p'),
+                        "url": company_url
+                    }
+                    
+                    rprint(f"[green]Datos obtenidos para {metadata['nombre']}:[/green]")
+                    for key, value in metadata.items():
+                        if key != "url":
+                            rprint(f"[cyan]{key.capitalize()}:[/cyan] {value}")
+                    
+                    return metadata
+                    
             except Exception as e:
                 if attempt == self.max_retries - 1:
                     print(f"Error al extraer metadatos después de {self.max_retries} intentos: {str(e)[:100]}")
@@ -233,15 +297,26 @@ class Abogados:
             )
             
             rprint(f"[blue]Iniciando scraping de: {URL}[/blue]")
-    
+            rprint(f"[blue]Archivo de salida: ./data/{self.json_filename}[/blue]")
+            
             companies = self.scrape_company_urls(URL)
+            rprint(f"[blue]Extrayendo metadatos de {len(companies)} empresas...[/blue]")
             
-            rprint(f"[green]Scraping completado![/green]")
-            rprint(f"[green]Total de empresas encontradas: {len(companies)}[/green]")
-            self._random_delay()
+            total_companies_processed = 0
             
-            if len(companies) > 1:
-                rprint(f"[cyan]Encontradas [/cyan][red]{len(companies)}[/red][cyan] empresas.[/cyan]")
+            for company_index, company_url in enumerate(companies, 1):
+                rprint(f"[cyan]Empresa {company_index}/{len(companies)}[/cyan]")
+                
+                company_data = self.scrape_company_metadata(company_url)
+                if company_data:
+                    self._append_to_json(company_data)
+                    total_companies_processed += 1
+                    rprint(f"[green]Empresa guardada en JSON. Total: {total_companies_processed}[/green]")
+                
+                rprint(f"[yellow]Progreso total: {total_companies_processed} empresas procesadas[/yellow]")
+            
+            rprint(f"[green]Proceso completado! Total de empresas procesadas: {total_companies_processed}[/green]")
+            rprint(f"[green]Archivo final: ./data/{self.json_filename}[/green]")
             
             return companies
             
