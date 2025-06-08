@@ -22,7 +22,7 @@ class CompanyMetadata(TypedDict):
 
 
 
-class Abogados:
+class Talleres24H:
     
     def __init__(self):
         self.USER_AGENTS: List[str] = config.USER_AGENTS
@@ -30,7 +30,7 @@ class Abogados:
         self.browser: Optional[Browser] = None
         self.request_delay = (2, 4)
         self.max_retries = 3
-        self.json_filename = f"pa_abogados_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        self.json_filename = f"pa_talleres24h_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
     @contextmanager
     def _get_page(self, user_agent: str = None):
@@ -314,7 +314,7 @@ class Abogados:
             self.playwright = sync_playwright().start()
             rprint("[green]Conectando...[/green]")
             
-            URL = "https://www.paginasamarillas.es/a/abogados/madrid/"
+            URL = "https://www.paginasamarillas.es/a/talleres-24-horas/madrid/"
             
             self.browser = self.playwright.chromium.launch(
                 headless = True,
