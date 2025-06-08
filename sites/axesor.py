@@ -23,7 +23,9 @@ class CompanyMetadata(TypedDict):
     url: str
 
 
+
 class Axesor:
+    
     def __init__(self) -> None:
         self.USER_AGENTS: List[str] = config.USER_AGENTS
         self.playwright = None
@@ -32,8 +34,10 @@ class Axesor:
         self.max_retries = 3
         self.json_filename = f"axesor_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
+
     @contextmanager
     def _get_page(self, user_agent: str = None):
+        
         context = None
         page = None
         try:
@@ -53,12 +57,14 @@ class Axesor:
 
 
     def _random_delay(self):
+        
         delay = random.uniform(*self.request_delay)
         rprint(f"[yellow]Esperando {delay:.2f} segundos...[/yellow]")
         time.sleep(delay)
 
 
     def _append_to_json(self, data: CompanyMetadata):
+        
         if os.path.exists(f"data/{self.json_filename}"):
             with open(f"data/{self.json_filename}", 'r', encoding='utf-8') as f:
                 existing_data = json.load(f)
@@ -72,6 +78,7 @@ class Axesor:
 
 
     def scrap_places(self, URL: str) -> List[str]:
+        
         rprint("[yellow]Intentando obtener municipios de Comunidad Madrid[/yellow]")
         self._random_delay()
         
@@ -107,6 +114,7 @@ class Axesor:
 
 
     def scrap_company_links(self, place_url: str) -> List[str]:
+        
         rprint(f"[yellow]Extrayendo enlaces de empresas de: {place_url}[/yellow]")
         self._random_delay()
         
@@ -185,6 +193,7 @@ class Axesor:
 
 
     def _detect_pagination(self, page: Page) -> Dict[str, any]:
+        
         try:
             pagination_div = page.query_selector('#paginacion')
             
@@ -246,6 +255,7 @@ class Axesor:
 
 
     def scrap_company_metadata(self, company_url: str) -> Optional[CompanyMetadata]:
+        
         rprint("[blue]*[/blue]" * 15)
         self._random_delay()
         
@@ -307,6 +317,7 @@ class Axesor:
 
 
     def _get_text_safe(self, page: Page, selector: str) -> str:
+        
         try:
             element = page.query_selector(selector)
             return element.inner_text().strip() if element else "N/A"
@@ -315,6 +326,7 @@ class Axesor:
     
 
     def _clean_address(self, address: str) -> str:
+        
         if not address or address == "N/A":
             return "N/A"
         
@@ -328,6 +340,7 @@ class Axesor:
 
 
     def main(self) -> None:
+        
         try:
             self.playwright = sync_playwright().start()
             rprint("[green]Conectando...[/green]")
