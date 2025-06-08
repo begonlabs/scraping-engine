@@ -62,15 +62,19 @@ class Talleres24H:
 
     def _append_to_json(self, data: CompanyMetadata):
         
-        if os.path.exists(f"data/{self.json_filename}"):
-            with open(f"data/{self.json_filename}", 'r', encoding='utf-8') as f:
+        data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+
+        json_path = os.path.join(data_dir, self.json_filename)
+        if os.path.exists(json_path):
+            with open(json_path, 'r', encoding='utf-8') as f:
                 existing_data = json.load(f)
         else:
             existing_data = []
-        
+
         existing_data.append(data)
-        
-        with open(f"data/{self.json_filename}", 'w', encoding='utf-8') as f:
+
+        with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(existing_data, f, ensure_ascii=False, indent=4)
 
 
