@@ -1,0 +1,262 @@
+import re
+import json
+import random
+import time
+import os
+from typing import List, Dict, Optional, TypedDict
+import config
+from datetime import datetime
+from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
+from rich import print as rprint
+from contextlib import contextmanager
+
+
+class CompanyMetadata(TypedDict):
+    nombre: str
+    descripcion: str
+    direccion: str
+    telefono: str
+    website: str
+    actividades: str
+
+
+
+class Abogados:
+    
+    def __init__(self):
+        self.USER_AGENTS: List[str] = config.USER_AGENTS
+        self.playwright = None
+        self.browser: Optional[Browser] = None
+        self.request_delay = (2, 4)
+        self.max_retries = 3
+
+    @contextmanager
+    def _get_page(self, user_agent: str = None):
+        
+        context = None
+        page = None
+        try:
+            user_agent = user_agent or random.choice(self.USER_AGENTS)
+            context = self.browser.new_context(
+                user_agent=user_agent,
+                ignore_https_errors=True
+            )
+            page = context.new_page()
+            yield page
+        
+        finally:
+            if page is not None:
+                page.close()
+            if context is not None:
+                context.close()
+
+
+    def _random_delay(self):
+        
+        delay = random.uniform(*self.request_delay)
+        rprint(f"[yellow]Esperando {delay:.2f} segundos...[/yellow]")
+        time.sleep(delay)
+
+
+    def _detect_pagination(self, page: Page) -> Dict[str, any]:
+        
+        try:
+            pagination_container = page.query_selector('div.pag2 ul.pagination')
+            
+            if not pagination_container:
+                rprint(f"[yellow]No se encontró contenedor de paginación[/yellow]")
+                return {'has_more_pages': False, 'reason': 'no_pagination_container'}
+            
+            current_page_element = pagination_container.query_selector('li.active a')
+            current_page = 1
+            if current_page_element:
+                current_page_text = current_page_element.inner_text().strip()
+                current_page = int(current_page_text) if current_page_text.isdigit() else 1
+            
+            page_links = pagination_container.query_selector_all('li a[href]:not([href*="javascript:void"])')
+            page_numbers = []
+            
+            for link in page_links:
+                page_text = link.inner_text().strip()
+                if page_text.isdigit():
+                    page_numbers.append(int(page_text))
+
+            next_button = pagination_container.query_selector('li a i.fa.icon-flecha-derecha')
+            has_next_button = next_button is not None
+
+            next_url = None
+            if has_next_button:
+                next_link = next_button.evaluate('el => el.closest("a")')
+                if next_link:
+                    next_url = page.evaluate('el => el.href', next_link)
+
+            max_visible_page = max(page_numbers) if page_numbers else current_page
+            has_more_pages = False
+            reason = ""
+            
+            if has_next_button and next_url and "javascript:void" not in next_url:
+                has_more_pages = True
+                reason = "next_button_with_valid_url"
+            elif current_page < max_visible_page:
+                has_more_pages = True
+                reason = f"current_page_{current_page}_less_than_max_{max_visible_page}"
+            else:
+                has_more_pages = False
+                reason = "no_more_pages_detected"
+            
+            result = {
+                'has_more_pages': has_more_pages,
+                'current_page': current_page,
+                'visible_pages': page_numbers,
+                'max_visible_page': max_visible_page,
+                'has_next_button': has_next_button,
+                'next_url': next_url,
+                'reason': reason
+            }
+            
+            return result
+            
+        except Exception as e:
+            rprint(f"[red]Error detectando paginación: {str(e)}[/red]")
+            return {'has_more_pages': False, 'reason': f'error: {str(e)}'}
+
+
+    def scrape_company_urls(self, base_url: str) -> List[str]:
+        
+        rprint(f"[yellow]Extrayendo enlaces de empresas de: {base_url}[/yellow]")
+        self._random_delay()
+        
+        all_company_links = []
+        current_url = base_url
+        page_num = 1
+        
+        while True:
+            rprint(f"[cyan]Procesando página {page_num}: {current_url}[/cyan]")
+            
+            for attempt in range(self.max_retries):
+                try:
+                    with self._get_page() as page:
+                        response = page.goto(current_url, wait_until="networkidle", timeout=60000)
+                        
+                        if response.status == 404:
+                            rprint(f"[yellow]Página {page_num} no encontrada (404)[/yellow]")
+                            rprint(f"[green]Total empresas encontradas: {len(all_company_links)}[/green]")
+                            return all_company_links
+                        
+                        page.wait_for_selector('.listado-item', timeout=30000)
+                        current_page_links = page.eval_on_selector_all(
+                            '.listado-item',
+                            '''nodes => nodes
+                                .map(node => node.querySelector('.row a')?.href)
+                                .filter(Boolean)
+                            '''
+                        )
+                        
+                        current_count = len(current_page_links)
+                        
+                        if current_count == 0:
+                            rprint(f"[yellow]No se encontraron empresas en página {page_num}[/yellow]")
+                            rprint(f"[green]Total empresas encontradas: {len(all_company_links)}[/green]")
+                            return all_company_links
+                        
+                        all_company_links.extend(current_page_links)
+                        rprint(f"[green]Encontradas {current_count} empresas en página {page_num} (Total: {len(all_company_links)})[/green]")
+                        
+                        pagination_info = self._detect_pagination(page)
+                        rprint(f"[cyan]Info paginación: {pagination_info}[/cyan]")
+                        
+                        if not pagination_info['has_more_pages']:
+                            rprint(f"[green]No hay más páginas disponibles - {pagination_info['reason']}[/green]")
+                            rprint(f"[green]Total empresas encontradas: {len(all_company_links)}[/green]")
+                            return all_company_links
+
+                        if pagination_info.get('next_url'):
+                            current_url = pagination_info['next_url']
+                        else:
+                            next_page_num = page_num + 1
+                            base_url_clean = base_url.rstrip('/')
+                            if re.search(r'/\d+$', base_url_clean):
+                                current_url = re.sub(r'/\d+$', f'/{next_page_num}', base_url_clean)
+                            else:
+                                current_url = f"{base_url_clean}/{next_page_num}"
+                        
+                        rprint(f"[green]Siguiente página: {current_url}[/green]")
+                        page_num += 1
+                        break
+
+                except Exception as e:
+                    if attempt == self.max_retries - 1:
+                        rprint(f"[red]Error después de {self.max_retries} intentos: {str(e)[:100]}[/red]")
+                        rprint(f"[green]Total empresas encontradas: {len(all_company_links)}[/green]")
+                        return all_company_links
+                    
+                    rprint(f"[red]Intento {attempt + 1} fallido, reintentando...[/red]")
+                    self._random_delay()
+            
+            self._random_delay()
+
+    
+    def scrape_company_metadata(self, company_url: str) -> Optional[CompanyMetadata]:
+
+        rprint("[blue]*[/blue]" * 15)
+        self._random_delay()
+
+        for attempt in range(self.max_retries):
+            try:
+                with self._get_page() as page:
+                    page.goto(company_url, wait_until="networkidle", timeout=60000)
+                    
+                    # TODO: Implementar lógica de scraping de metadatos
+                    return
+        
+
+            except Exception as e:
+                if attempt == self.max_retries - 1:
+                    print(f"Error al extraer metadatos después de {self.max_retries} intentos: {str(e)[:100]}")
+                    return None
+                rprint(f"[red]Intento {attempt + 1} fallido, reintentando...[/red]")
+                self._random_delay()
+
+
+    def main(self):
+        
+        try:
+            self.playwright = sync_playwright().start()
+            rprint("[green]Conectando...[/green]")
+            
+            URL = "https://www.paginasamarillas.es/a/abogados/madrid/"
+            
+            self.browser = self.playwright.chromium.launch(
+                headless = True,
+                timeout = 60000,
+                args=["--ignore-certificate-errors", "--ignore-ssl-errors"]
+            )
+            
+            rprint(f"[blue]Iniciando scraping de: {URL}[/blue]")
+    
+            companies = self.scrape_company_urls(URL)
+            
+            rprint(f"[green]Scraping completado![/green]")
+            rprint(f"[green]Total de empresas encontradas: {len(companies)}[/green]")
+            self._random_delay()
+            
+            if len(companies) > 1:
+                rprint(f"[cyan]Encontradas [/cyan][red]{len(companies)}[/red][cyan] empresas.[/cyan]")
+            
+            return companies
+            
+        except Exception as e:
+            rprint(f"[red]Error general: {str(e)[:120]}[/red]")
+            return []
+            
+        finally:
+            if hasattr(self, 'browser') and self.browser:
+                self.browser.close()
+            if hasattr(self, 'playwright') and self.playwright:
+                self.playwright.stop()
+
+
+#if __name__ == "__main__":
+#    abogados = Abogados()
+#    companies = abogados.main()
+#    rprint(f"[green]Proceso completado. {len(companies)} empresas procesadas.[/green]")
