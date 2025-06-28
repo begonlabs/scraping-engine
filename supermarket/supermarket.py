@@ -33,9 +33,7 @@ class Supermarket:
 
     @contextmanager
     def _get_page(self, user_agent: str = None):
-        """
-        Context manager para crear y cerrar páginas de Playwright
-        """
+        
         context = None
         page = None
         try:
@@ -55,18 +53,14 @@ class Supermarket:
 
 
     def _random_delay(self):
-        """
-        Pausa aleatoria entre solicitudes
-        """
+
         delay = random.uniform(*self.request_delay)
         rprint(f"[yellow]Esperando {delay:.2f} segundos...[/yellow]")
         time.sleep(delay)
 
 
     def _append_to_json(self, data: ProductMetadata):
-        """
-        Añade datos al archivo JSON
-        """
+
         data_dir = os.path.join(os.path.dirname(__file__), 'data')
         os.makedirs(data_dir, exist_ok=True)
 
@@ -84,11 +78,8 @@ class Supermarket:
 
 
     def _handle_location_dialog(self, page: Page) -> bool:
-        """
-        Maneja el diálogo de selección de ubicación
-        """
+
         try:
-            # Verificar si el dialog está presente
             dialog_selector = 'app-target-delivery-dialog'
             
             dialog_element = page.query_selector(dialog_selector)
@@ -98,11 +89,9 @@ class Supermarket:
             
             rprint("[cyan]Dialog de ubicación detectado, configurando...[/cyan]")
             
-            # Verificar si el diálogo es visible
             is_visible = page.is_visible(dialog_selector)
             rprint(f"[cyan]¿Dialog visible? {is_visible}[/cyan]")
-            
-            # Buscar todos los selectores posibles para provincia
+
             province_selectors = [
                 'select[name="province"]',
                 'select[id="province"]',
@@ -124,8 +113,7 @@ class Supermarket:
                 return False
             
             page.wait_for_selector(province_selector, timeout=10000)
-            
-            # Buscar la opción de La Habana por el texto visible
+
             province_options = page.query_selector_all(f'{province_selector} option')
             rprint(f"[cyan]Opciones de provincia encontradas: {len(province_options)}[/cyan]")
             
@@ -144,12 +132,18 @@ class Supermarket:
             if not habana_found:
                 rprint("[red]No se encontró la opción 'La Habana'[/red]")
                 return False
-            
-            # Esperar a que se carguen los municipios
+
             rprint("[cyan]Esperando a que se carguen los municipios...[/cyan]")
-            time.sleep(5)
-            
-            # Buscar selectores de municipio
+
+            page.wait_for_function(
+                '''(provinceSelector) => {
+                    const select = document.querySelector(provinceSelector);
+                    return select && select.value !== "";
+                }''',
+                arg=province_selector,
+                timeout=10000
+            )
+
             municipality_selectors = [
                 'select[name="municipality"]',
                 'select[id="municipality"]',
@@ -168,17 +162,16 @@ class Supermarket:
             if not municipality_selector:
                 rprint("[red]No se encontró selector de municipio[/red]")
                 return False
-            
-            # ✅ CORREGIDO: Esperar a que el select de municipios tenga opciones cargadas
+
             page.wait_for_function(
-                f'''() => {{
-                    const select = document.querySelector("{municipality_selector}");
-                    return select && select.options.length > 1;
-                }}''',
+                '''(selector) => {
+                    const select = document.querySelector(selector);
+                    return select && Array.from(select.options).some(opt => opt.value && opt.value !== "");
+                }''',
+                arg=municipality_selector,
                 timeout=15000
             )
-            
-            # Buscar la opción de Centro Habana por el texto visible
+
             municipality_options = page.query_selector_all(f'{municipality_selector} option')
             rprint(f"[cyan]Opciones de municipio encontradas: {len(municipality_options)}[/cyan]")
             
@@ -197,8 +190,7 @@ class Supermarket:
             if not centro_habana_found:
                 rprint("[red]No se encontró el municipio 'CENTRO HABANA'[/red]")
                 return False
-            
-            # Buscar botón Aceptar con múltiples selectores
+
             accept_selectors = [
                 'button.btn-primary-yellow.yellow-rounded',
                 'button:has-text("Aceptar")',
@@ -218,10 +210,9 @@ class Supermarket:
                     break
             
             if accept_button:
-                # ✅ CORREGIDO: Asegurarse de que el botón es clickeable
                 page.wait_for_function(
                     '''(button) => {
-                        return button.offsetParent !== null && !button.disabled;
+                        return button && button.offsetParent !== null && !button.disabled;
                     }''',
                     arg=accept_button,
                     timeout=5000
@@ -229,16 +220,11 @@ class Supermarket:
                 
                 accept_button.click()
                 rprint("[green]Botón 'Aceptar' clickeado[/green]")
-                
-                # Esperar a que el dialog desaparezca
+
                 page.wait_for_selector(dialog_selector, state='detached', timeout=15000)
                 rprint("[green]Dialog de ubicación cerrado exitosamente[/green]")
-                
-                # Esperar a que la página se recargue/actualice después del diálogo
+
                 rprint("[cyan]Esperando a que la página se actualice...[/cyan]")
-                time.sleep(5)
-                
-                # Esperar a que la página esté completamente cargada
                 page.wait_for_load_state("networkidle", timeout=30000)
                 rprint("[cyan]Página actualizada correctamente[/cyan]")
                 
@@ -255,29 +241,28 @@ class Supermarket:
 
 
     def _get_text_safe(self, page: Page, selector: str) -> str:
-        """
-        Extrae texto de forma segura
-        """
+
         try:
             element = page.query_selector(selector)
-            return element.inner_text().strip() if element else "N/A"
+            if element:
+                try:
+                    return element.inner_text().strip()
+                except:
+                    return "N/A"
+            return "N/A"
         except:
             return "N/A"
 
 
     def _get_price_safe(self, page: Page) -> str:
-        """
-        Extrae precio de forma segura
-        """
+
         try:
-            # Intentar obtener precio desde meta tag primero
             price_meta = page.query_selector('meta[itemprop="price"]')
             if price_meta:
                 price_value = price_meta.get_attribute('content')
                 if price_value:
                     return f"{price_value} USD"
             
-            # Si no, desde el span visible
             price_span = page.query_selector('span.regular_price')
             if price_span:
                 return price_span.inner_text().strip()
@@ -288,15 +273,12 @@ class Supermarket:
 
 
     def _get_category_safe(self, page: Page) -> str:
-        """
-        Extrae categoría de forma segura
-        """
+
         try:
             category_link = page.query_selector('span[itemtype="https://schema.org/CategoryCode"] a.link')
             if category_link:
                 return category_link.inner_text().strip()
             
-            # Alternativa: desde meta tag
             category_meta = page.query_selector('meta[itemprop="name"][content]')
             if category_meta:
                 return category_meta.get_attribute('content') or "N/A"
@@ -307,15 +289,12 @@ class Supermarket:
 
 
     def _get_brand_safe(self, page: Page) -> str:
-        """
-        Extrae marca de forma segura
-        """
+
         try:
             brand_link = page.query_selector('span[itemprop="brand"] a.link')
             if brand_link:
                 return brand_link.inner_text().strip()
-            
-            # Alternativa: desde meta tag
+
             brand_meta = page.query_selector('span[itemprop="brand"] meta[itemprop="name"]')
             if brand_meta:
                 return brand_meta.get_attribute('content') or "N/A"
@@ -326,9 +305,7 @@ class Supermarket:
 
 
     def _get_description_safe(self, page: Page) -> str:
-        """
-        Extrae descripción de forma segura
-        """
+
         try:
             desc_p = page.query_selector('p[itemprop="description"]')
             if desc_p:
@@ -339,13 +316,10 @@ class Supermarket:
 
 
     def _check_and_handle_dialog(self, page: Page):
-        """
-        Verifica y maneja diálogos en cada página
-        """
+
         try:
             rprint("[cyan]Verificando si hay diálogos en la página...[/cyan]")
             
-            # Verificar múltiples selectores de diálogo
             dialog_selectors = [
                 'app-target-delivery-dialog',
                 '.modal',
@@ -372,7 +346,6 @@ class Supermarket:
                 success = self._handle_location_dialog(page)
                 if success:
                     rprint("[green]Diálogo manejado exitosamente[/green]")
-                    # Pequeña pausa después de manejar el dialog
                     time.sleep(2)
                 else:
                     rprint("[red]Error manejando el diálogo[/red]")
@@ -386,24 +359,20 @@ class Supermarket:
 
 
     def _detect_pagination(self, page: Page) -> Dict[str, any]:
-        """
-        Detecta información de paginación
-        """
+
         try:
             pagination_container = page.query_selector('pagination ul.pagination')
             
             if not pagination_container:
                 rprint(f"[yellow]No se encontró contenedor de paginación[/yellow]")
                 return {'has_more_pages': False, 'reason': 'no_pagination_container'}
-            
-            # Obtener página actual
+
             current_page_element = pagination_container.query_selector('li.pagination-page.active a')
             current_page = 1
             if current_page_element:
                 current_page_text = current_page_element.inner_text().strip()
                 current_page = int(current_page_text) if current_page_text.isdigit() else 1
-            
-            # Obtener todas las páginas visibles
+
             page_links = pagination_container.query_selector_all('li.pagination-page a')
             page_numbers = []
             
@@ -412,7 +381,6 @@ class Supermarket:
                 if page_text.isdigit():
                     page_numbers.append(int(page_text))
 
-            # Verificar botón siguiente
             next_button = pagination_container.query_selector('li.pagination-next:not(.disabled) a')
             has_next_button = next_button is not None
 
@@ -447,16 +415,13 @@ class Supermarket:
 
 
     def _process_products_from_current_page(self, page: Page) -> int:
-        """
-        Procesa productos de la página actual
-        """
+
         try:
             rprint("[cyan]Intentando extraer enlaces de productos...[/cyan]")
-            
-            # ✅ CORREGIDO: Selectores más específicos y en orden de prioridad
+
             selectors_to_try = [
-                'a.primary_img',  # ✅ Con underscore, no asterisco
-                'a[href*="/es/producto/"]',  # ✅ Más específico para español
+                'a.primary_img',
+                'a[href*="/es/producto/"]',
                 'a[href*="/producto/"]',
                 '.product-item a',
                 '.product-link',
@@ -475,7 +440,6 @@ class Supermarket:
                                 const href = node.getAttribute('href');
                                 if (!href) return null;
                                 
-                                // ✅ MEJORA: Filtrar solo enlaces de productos
                                 if (href.includes('/producto/') || href.includes('/es/producto/')) {
                                     return href.startsWith('/') ? 'https://www.supermarket23.com' + href : href;
                                 }
@@ -486,7 +450,6 @@ class Supermarket:
                     )
                     
                     if links and len(links) > 0:
-                        # ✅ MEJORA: Eliminar duplicados
                         product_links = list(set(links))
                         rprint(f"[green]Encontrados {len(product_links)} enlaces únicos con selector: {selector}[/green]")
                         break
@@ -502,7 +465,6 @@ class Supermarket:
             if not product_links:
                 rprint(f"[red]No se encontraron productos en esta página con ningún selector[/red]")
                 
-                # ✅ MEJORA: Debug más específico
                 try:
                     all_product_links = page.eval_on_selector_all(
                         'a[href*="/producto/"]',
@@ -510,7 +472,6 @@ class Supermarket:
                     )
                     rprint(f"[yellow]Enlaces de producto encontrados (primeros 5): {all_product_links}[/yellow]")
                     
-                    # Verificar si hay elementos con clase primary_img
                     primary_img_count = page.locator('a.primary_img').count()
                     rprint(f"[yellow]Elementos con clase 'primary_img': {primary_img_count}[/yellow]")
                     
@@ -544,9 +505,7 @@ class Supermarket:
 
 
     def scrape_product_urls(self, base_url: str) -> List[str]:
-        """
-        Extrae URLs de productos y los procesa directamente
-        """
+
         rprint(f"[yellow]Extrayendo enlaces de productos de: {base_url}[/yellow]")
         self._random_delay()
         
@@ -563,13 +522,11 @@ class Supermarket:
                         rprint(f"[cyan]Navegando a: {current_url}[/cyan]")
                         page.goto(current_url, wait_until="networkidle", timeout=60000)
                         
-                        # Verificar y manejar dialog en cada página
                         self._check_and_handle_dialog(page)
                         
-                        # ✅ CORREGIDO: Verificar múltiples selectores para productos
                         rprint("[cyan]Buscando productos en la página...[/cyan]")
                         product_selectors = [
-                            'a.primary_img',  # ✅ Con underscore
+                            'a.primary_img',
                             'a[href*="/es/producto/"]',
                             'a[href*="/producto/"]',
                             '.product-item a',
@@ -589,13 +546,11 @@ class Supermarket:
                         
                         if not products_found:
                             rprint("[red]No se encontraron productos con ningún selector[/red]")
-                            # Intentar ver qué hay en la página
                             page_content = page.content()
                             if "producto" in page_content.lower():
                                 rprint("[yellow]La palabra 'producto' está en la página, revisando estructura...[/yellow]")
                             raise Exception("No se encontraron productos en la página")
                         
-                        # Procesar productos de esta página directamente
                         products_processed = self._process_products_from_current_page(page)
                         total_products_processed += products_processed
                         rprint(f"[green]Procesados {products_processed} productos en página {page_num} (Total: {total_products_processed})[/green]")
@@ -608,7 +563,6 @@ class Supermarket:
                             rprint(f"[green]Total productos procesados: {total_products_processed}[/green]")
                             return []
 
-                        # Construir URL de siguiente página
                         next_page_num = page_num + 1
                         current_url = f"https://www.supermarket23.com/es/productos?pagina={next_page_num}"
                         
@@ -630,9 +584,7 @@ class Supermarket:
 
 
     def scrape_product_metadata(self, product_url: str) -> Optional[ProductMetadata]:
-        """
-        Extrae metadatos de un producto específico
-        """
+
         rprint("[blue]*[/blue]" * 15)
         self._random_delay()
 
@@ -641,10 +593,8 @@ class Supermarket:
                 with self._get_page() as page:
                     page.goto(product_url, wait_until="networkidle", timeout=60000)
                     
-                    # Verificar dialog en página de producto
                     self._check_and_handle_dialog(page)
                     
-                    # Esperar elemento principal del producto
                     page.wait_for_selector('h1[itemprop="name"]', timeout=30000)
 
                     metadata: ProductMetadata = {
@@ -672,9 +622,7 @@ class Supermarket:
 
 
     def main(self):
-        """
-        Método principal para ejecutar el scraping
-        """
+
         try:
             self.playwright = sync_playwright().start()
             rprint("[green]Conectando...[/green]")
